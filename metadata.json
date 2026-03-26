@@ -1,0 +1,8 @@
+{
+  "name": "Vinci AI Video Editor",
+  "description": "Professional AI-powered video editing platform for social media creators, featuring AI-driven text-to-video editing, automated reel generation, and advanced social media optimization tools.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
