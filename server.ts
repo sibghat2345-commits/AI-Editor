@@ -106,13 +106,24 @@ const runFFmpeg = (inputPath: string, outputPath: string, options: any) => {
 };
 
 // API Routes
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
 app.post('/api/upload', upload.single('video'), (req: any, res) => {
-  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  console.log('Upload request received');
+  if (!req.file) {
+    console.error('No file in request');
+    return res.status(400).json({ error: 'No file uploaded' });
+  }
+  
+  console.log('File uploaded successfully:', req.file.filename);
   res.json({ 
     id: req.file.filename,
     url: `/uploads/${req.file.filename}`,
     name: req.file.originalname,
-    size: req.file.size
+    size: req.file.size,
+    type: 'video' // Default to video for now
   });
 });
 

@@ -143,7 +143,7 @@ const AIChatPanel = ({ onCommand, isProcessing }: { onCommand: (cmd: string) => 
 
 import { AutomationTools } from './AutomationTools';
 
-const MediaLibrary = ({ assets, onUpload }: { assets: MediaAsset[], onUpload: (files: File[]) => void }) => {
+const MediaLibrary = ({ assets, onUpload, onAddToTimeline }: { assets: MediaAsset[], onUpload: (files: File[]) => void, onAddToTimeline: (asset: MediaAsset) => void }) => {
   const [activeTab, setActiveTab] = useState<'media' | 'ai'>('media');
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop: onUpload,
@@ -197,8 +197,14 @@ const MediaLibrary = ({ assets, onUpload }: { assets: MediaAsset[], onUpload: (f
                         <ImageIcon className="text-gray-600" />
                       </div>
                     )}
-                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-end p-1 transition-opacity">
-                      <span className="text-[10px] text-white truncate">{asset.name}</span>
+                    <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex flex-col items-center justify-center gap-2 transition-opacity">
+                      <button 
+                        onClick={() => onAddToTimeline(asset)}
+                        className="bg-purple-600 hover:bg-purple-500 text-white text-[10px] font-bold px-2 py-1 rounded flex items-center gap-1"
+                      >
+                        <Plus className="w-3 h-3" /> Add to Timeline
+                      </button>
+                      <span className="text-[10px] text-white truncate px-2">{asset.name}</span>
                     </div>
                   </div>
                 ))}
@@ -206,7 +212,7 @@ const MediaLibrary = ({ assets, onUpload }: { assets: MediaAsset[], onUpload: (f
             )}
           </div>
         ) : (
-          <AutomationTools />
+          <AutomationTools assets={assets} />
         )}
       </div>
     </div>
@@ -386,6 +392,24 @@ export default function VinciEditor() {
     }, 1000);
   };
 
+  const addAssetToTimeline = (asset: MediaAsset) => {
+    const newClip: TimelineClip = {
+      id: `clip-${Math.random().toString(36).substr(2, 9)}`,
+      assetId: asset.id,
+      startTime: project.clips.length > 0 ? Math.max(...project.clips.map(c => c.startTime + c.duration)) : 0,
+      duration: 10, // Default 10s
+      offset: 0,
+      track: 0,
+      type: asset.type === 'video' ? 'video' : asset.type === 'audio' ? 'audio' : 'text'
+    };
+
+    setProject(prev => ({
+      ...prev,
+      clips: [...prev.clips, newClip]
+    }));
+    addHistory(`Added ${asset.name} to timeline`);
+  };
+
   const handleUpload = async (files: File[]) => {
     setIsProcessing(true);
     const formData = new FormData();
@@ -396,15 +420,38 @@ export default function VinciEditor() {
         method: 'POST',
         body: formData
       });
+      
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`Server responded with ${res.status}: ${text.substring(0, 100)}`);
+      }
+
       const asset = await res.json();
       
-      setProject(prev => ({
-        ...prev,
-        assets: [asset, ...prev.assets]
-      }));
+      setProject(prev => {
+        const newProject = {
+          ...prev,
+          assets: [asset, ...prev.assets]
+        };
+        // Auto-add first asset to timeline if empty
+        if (prev.assets.length === 0 && prev.clips.length === 0) {
+          const newClip: TimelineClip = {
+            id: `clip-${Math.random().toString(36).substr(2, 9)}`,
+            assetId: asset.id,
+            startTime: 0,
+            duration: 10,
+            offset: 0,
+            track: 0,
+            type: 'video'
+          };
+          newProject.clips = [newClip];
+        }
+        return newProject;
+      });
       addHistory(`Uploaded ${asset.name}`);
     } catch (err) {
       console.error('Upload failed:', err);
+      alert(`Upload failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
     } finally {
       setIsProcessing(false);
     }
@@ -477,7 +524,7 @@ export default function VinciEditor() {
 
       {/* Main Workspace */}
       <div className="flex-1 flex overflow-hidden">
-        <MediaLibrary assets={project.assets} onUpload={handleUpload} />
+        <MediaLibrary assets={project.assets} onUpload={handleUpload} onAddToTimeline={addAssetToTimeline} />
         
         <div className="flex-1 flex flex-col bg-[#0f0f0f] relative">
           {/* Preview Area */}
@@ -549,7 +596,7 @@ export default function VinciEditor() {
           <Timeline 
             clips={project.clips} 
             currentTime={currentTime} 
-            duration={60} 
+            duration={Math.max(60, ...project.clips.map(c => c.startTime + c.duration), 0)} 
             onTimeChange={(t) => {
               setCurrentTime(t);
               if (videoRef.current) videoRef.current.currentTime = t;

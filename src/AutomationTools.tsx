@@ -51,11 +51,11 @@ const ToolModal = ({ isOpen, onClose, title, icon, children }: ToolModalProps) =
   </AnimatePresence>
 );
 
-export const AutomationTools = () => {
+export const AutomationTools = ({ assets }: { assets: any[] }) => {
   const [activeTool, setActiveTool] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<any>(null);
-  const [formData, setFormData] = useState<any>({});
+  const [formData, setFormData] = useState<any>({ videoId: '' });
 
   const tools = [
     {
@@ -267,18 +267,37 @@ export const AutomationTools = () => {
             <p className="text-sm text-purple-200">AI will find the most engaging highlights and crop them for TikTok/Reels.</p>
           </div>
           
-          <div className="p-8 border-2 border-dashed border-[#333] rounded-2xl flex flex-col items-center justify-center gap-4 hover:border-purple-500/50 transition-colors cursor-pointer">
-            <Video className="w-12 h-12 text-gray-600" />
-            <div className="text-center">
-              <p className="text-white font-bold">Select Video to Convert</p>
-              <p className="text-xs text-gray-500 mt-1">Supports MP4, MOV up to 500MB</p>
+          <div className="space-y-4">
+            <label className="block text-sm font-medium text-gray-400">Select Source Video</label>
+            <div className="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto p-1">
+              {assets.filter(a => a.type === 'video').map(asset => (
+                <button
+                  key={asset.id}
+                  onClick={() => setFormData({ ...formData, videoId: asset.id })}
+                  className={cn(
+                    "p-2 rounded-xl border text-left transition-all",
+                    formData.videoId === asset.id ? "border-purple-500 bg-purple-500/10" : "border-[#333] bg-[#222] hover:border-[#444]"
+                  )}
+                >
+                  <div className="aspect-video bg-black rounded mb-2 overflow-hidden">
+                    <video src={asset.url} className="w-full h-full object-cover" />
+                  </div>
+                  <p className="text-[10px] text-white truncate font-bold">{asset.name}</p>
+                </button>
+              ))}
+              {assets.filter(a => a.type === 'video').length === 0 && (
+                <div className="col-span-2 p-8 border-2 border-dashed border-[#333] rounded-2xl flex flex-col items-center justify-center gap-2">
+                  <Video className="w-8 h-8 text-gray-600" />
+                  <p className="text-xs text-gray-500">No videos uploaded yet</p>
+                </div>
+              )}
             </div>
           </div>
 
           <button 
-            disabled={loading}
+            disabled={loading || !formData.videoId}
             onClick={() => handleGenerate('reel')}
-            className="w-full bg-purple-600 hover:bg-purple-500 text-white font-bold py-4 rounded-xl flex items-center justify-center gap-2"
+            className="w-full bg-purple-600 hover:bg-purple-500 disabled:bg-purple-800 text-white font-bold py-4 rounded-xl flex items-center justify-center gap-2"
           >
             {loading ? <Loader2 className="animate-spin" /> : <Play className="w-5 h-5" />}
             {loading ? 'Processing Reel...' : 'Create Viral Reel'}
