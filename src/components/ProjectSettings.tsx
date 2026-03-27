@@ -107,6 +107,17 @@ export const ProjectSettings = ({ isOpen, onClose, project, onUpdate }: ProjectS
                 ))}
               </div>
             </div>
+
+            <div className="p-4 bg-blue-500/5 border border-blue-500/20 rounded-2xl space-y-2">
+              <div className="flex items-center gap-2 text-blue-400">
+                <Info className="w-4 h-4" />
+                <span className="text-[10px] font-bold uppercase tracking-widest">Local Mode Active</span>
+              </div>
+              <p className="text-[11px] text-gray-500 leading-relaxed">
+                Your project data and media are stored locally in your browser and on this server's temporary storage. 
+                Cloud synchronization is currently disabled.
+              </p>
+            </div>
           </div>
 
           <div className="p-6 bg-[#0a0a0a] border-t border-[#222] flex gap-3">

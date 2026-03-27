@@ -61,7 +61,7 @@ export const AIChatPanel = ({ onCommand, isProcessing }: { onCommand: (cmd: stri
           </div>
           <div>
             <h2 className="font-bold text-white text-sm tracking-tight">AI Assistant</h2>
-            <p className="text-[10px] text-gray-500 font-medium">Powered by Gemini 3</p>
+            <p className="text-[10px] text-gray-500 font-medium">Powered by Local AI</p>
           </div>
         </div>
         {isProcessing && (

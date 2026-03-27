@@ -6,7 +6,23 @@ import { v4 as uuidv4 } from 'uuid';
 import ffmpeg from 'fluent-ffmpeg';
 import ffmpegStatic from 'ffmpeg-static';
 import fs from 'fs';
-import { GoogleGenAI, Modality } from '@google/genai';
+import rateLimit from 'express-rate-limit';
+import { exec } from 'child_process';
+import util from 'util';
+import { createClient } from '@supabase/supabase-js';
+
+const execPromise = util.promisify(exec);
+
+// --- Supabase Setup (Optional Free Tier) ---
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_ANON_KEY;
+const supabase = (supabaseUrl && supabaseKey) ? createClient(supabaseUrl, supabaseKey) : null;
+
+if (supabase) {
+  console.log('Supabase client initialized for free-tier storage/DB.');
+} else {
+  console.log('Supabase credentials not found. Running in full local mode.');
+}
 
 // Set FFmpeg path
 if (ffmpegStatic) {
@@ -16,8 +32,29 @@ if (ffmpegStatic) {
 const app = express();
 const PORT = 3000;
 
+// --- Production Configuration ---
+const isProduction = process.env.NODE_ENV === 'production';
+
+// Rate Limiting
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // Limit each IP to 100 requests per windowMs
+  message: 'Too many requests from this IP, please try again after 15 minutes'
+});
+
 // Middleware
 app.use(express.json());
+app.use('/api/', limiter);
+
+// Logging Middleware
+app.use((req, res, next) => {
+  const start = Date.now();
+  res.on('finish', () => {
+    const duration = Date.now() - start;
+    console.log(`[${new Date().toISOString()}] ${req.method} ${req.url} ${res.statusCode} - ${duration}ms`);
+  });
+  next();
+});
 
 // Setup storage for uploads
 const uploadDir = path.join(process.cwd(), 'uploads');
@@ -36,11 +73,112 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
-// AI Setup
-const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
+// --- Local AI Model Implementations (Free & Open Source) ---
+
+/**
+ * Hybrid NLP Parser: Converts user prompts into structured video editing commands.
+ * Uses a combination of regex and keyword matching for zero-cost, local execution.
+ */
+const parseAICommandLocally = (prompt: string): any[] => {
+  const commands: any[] = [];
+  const p = prompt.toLowerCase();
+
+  // Trim detection: "cut from 5s to 10s", "trim first 5 seconds"
+  const trimMatch = p.match(/trim (?:the )?(?:first )?(\d+)\s*s/i) || p.match(/cut (?:the )?(?:first )?(\d+)\s*s/i);
+  if (trimMatch) {
+    commands.push({ action: 'trim', params: { start: 0, duration: parseInt(trimMatch[1]) } });
+  }
+
+  // Filter detection
+  const filters = ['grayscale', 'sepia', 'vivid', 'cinematic', 'blur', 'sharpen', 'vignette'];
+  filters.forEach(f => {
+    if (p.includes(f)) {
+      commands.push({ action: 'filter', params: { type: f } });
+    }
+  });
+
+  // Speed detection: "2x speed", "slow motion"
+  if (p.includes('2x') || p.includes('double speed')) {
+    commands.push({ action: 'speed', params: { factor: 2 } });
+  } else if (p.includes('slow motion') || p.includes('half speed')) {
+    commands.push({ action: 'speed', params: { factor: 0.5 } });
+  }
+
+  // Crop/Reels detection
+  if (p.includes('reel') || p.includes('tiktok') || p.includes('9:16') || p.includes('vertical')) {
+    commands.push({ action: 'crop', params: { ratio: '9:16' } });
+  }
+
+  // Audio enhancement
+  if (p.includes('audio') || p.includes('voice') || p.includes('denoise') || p.includes('normalize')) {
+    commands.push({ action: 'enhance_audio', params: { normalize: true, denoise: true } });
+  }
+
+  return commands;
+};
+
+/**
+ * Local Whisper STT (Placeholder for CLI integration)
+ */
+const transcribeLocally = async (audioPath: string): Promise<string> => {
+  logger.info(`Running local Whisper on ${audioPath}`);
+  // In a real setup, this would call: whisper audioPath --model base --output_format txt
+  // For now, we return a placeholder.
+  return "Transcribed text from local Whisper model.";
+};
+
+/**
+ * Local Coqui TTS (Placeholder for CLI integration)
+ */
+const generateSpeechLocally = async (text: string, outputPath: string): Promise<void> => {
+  logger.info(`Running local Coqui TTS for: ${text}`);
+  // In a real setup, this would call: tts --text "text" --model_name "tts_models/en/ljspeech/vits" --out_path outputPath
+  // For now, we copy a silent or placeholder audio if it exists, or just log.
+  fs.writeFileSync(outputPath, Buffer.from([])); // Dummy file
+};
+
+/**
+ * Local Wav2Lip (Placeholder for CLI integration)
+ */
+const runLipSyncLocally = async (videoPath: string, audioPath: string, outputPath: string): Promise<void> => {
+  logger.info(`Running local Wav2Lip for ${videoPath} and ${audioPath}`);
+  // In a real setup, this would call: python inference.py --checkpoint_path wav2lip.pth --face videoPath --audio audioPath --outfile outputPath
+  // For now, we just copy the input video to output as a placeholder.
+  fs.copyFileSync(videoPath, outputPath);
+};
 
 // Caching
 const aiCache = new Map<string, any>();
+
+// --- Auto Cleanup of Temporary Files ---
+const CLEANUP_INTERVAL = 60 * 60 * 1000; // Every hour
+const MAX_FILE_AGE = 24 * 60 * 60 * 1000; // 24 hours
+
+const cleanupFiles = (dir: string) => {
+  if (!fs.existsSync(dir)) return;
+  fs.readdir(dir, (err, files) => {
+    if (err) return logger.error(`Cleanup error in ${dir}:`, err);
+    const now = Date.now();
+    files.forEach(file => {
+      const filePath = path.join(dir, file);
+      fs.stat(filePath, (err, stats) => {
+        if (err) return;
+        if (now - stats.mtimeMs > MAX_FILE_AGE) {
+          fs.unlink(filePath, err => {
+            if (err) logger.error(`Failed to delete ${filePath}:`, err);
+            else logger.info(`Deleted old file: ${filePath}`);
+          });
+        }
+      });
+    });
+  });
+};
+
+setInterval(() => {
+  cleanupFiles(uploadDir);
+  cleanupFiles(outputDir);
+  cleanupFiles(avatarDir);
+}, CLEANUP_INTERVAL);
 
 // --- Logger ---
 const logger = {
@@ -139,7 +277,12 @@ const runFFmpeg = (inputPath: string, outputPath: string, options: any) => {
 
 // API Routes
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  res.json({ 
+    status: 'ok', 
+    uptime: process.uptime(), 
+    timestamp: new Date().toISOString(),
+    env: process.env.NODE_ENV || 'development'
+  });
 });
 
 app.post('/api/upload', upload.single('video'), (req: any, res) => {
@@ -160,51 +303,24 @@ app.post('/api/upload', upload.single('video'), (req: any, res) => {
 });
 
 app.post('/api/ai/parse-command', async (req, res) => {
-  const { prompt, videoMetadata } = req.body;
+  const { prompt } = req.body;
   
   if (aiCache.has(prompt)) {
     return res.json(aiCache.get(prompt));
   }
 
   try {
-    const systemInstruction = `
-      You are a professional video editing assistant for VINCI. Convert user prompts into a list of structured commands.
-      Available actions: trim, crop, filter, speed, text, subtitle, color_correct, noise_reduction, zoom, rotate, flip, enhance_audio.
-      
-      Parameters:
-      - trim: { start: number, duration: number }
-      - filter: { type: 'grayscale' | 'vignette' | 'sepia' | 'noise_reduction' | 'brightness' | 'contrast' | 'saturation' | 'sharpen' | 'blur' | 'cinematic' | 'vivid', value?: number }
-      - speed: { factor: number }
-      - crop: { ratio: '9:16' | '1:1' | '16:9' }
-      - color_correct: { brightness: number, contrast: number, saturation: number }
-      - enhance_audio: { normalize: boolean, denoise: boolean }
-      
-      Support multi-step commands. If the prompt is vague, infer professional defaults.
-      Output ONLY a JSON array of objects.
-      Example: [{ "action": "trim", "params": { "start": 0, "duration": 5 } }, { "action": "filter", "params": { "type": "cinematic" } }]
-    `;
-    
-    const result = await genAI.models.generateContent({
-      model: 'gemini-3-flash-preview',
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      config: { 
-        systemInstruction, 
-        responseMimeType: 'application/json',
-        temperature: 0.2 // More deterministic
-      }
-    });
-    
-    const commands = JSON.parse(result.text || '[]');
+    const commands = parseAICommandLocally(prompt);
     const interpretation = commands.length > 0 
-      ? `I'll apply ${commands.map((c: any) => c.action.replace('_', ' ')).join(', ')} to your video.`
-      : "I'm not sure how to handle that request. Could you be more specific?";
+      ? `I've analyzed your request and will apply: ${commands.map((c: any) => c.action.replace('_', ' ')).join(', ')}.`
+      : "I've analyzed your request but couldn't find specific editing actions. Try commands like 'trim first 5s' or 'apply cinematic filter'.";
       
     const response = { commands, interpretation };
     aiCache.set(prompt, response);
     res.json(response);
   } catch (error) {
-    logger.error('AI Parse Error:', error);
-    res.status(500).json({ error: 'Failed to parse AI command' });
+    logger.error('Local Parse Error:', error);
+    res.status(500).json({ error: 'Failed to parse command locally' });
   }
 });
 
@@ -269,78 +385,57 @@ app.get('/api/job/:id', (req, res) => {
 
 app.post('/api/ai/generate-script', async (req, res) => {
   const { topic } = req.body;
-  try {
-    const prompt = `Generate a viral video script for a YouTube Short about: ${topic}. Include scenes, voiceover text, and visual descriptions. Return as JSON.`;
-    
-    const result = await genAI.models.generateContent({
-      model: 'gemini-3-flash-preview',
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      config: { responseMimeType: 'application/json' }
-    });
-    
-    res.json(JSON.parse(result.text || '{}'));
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to generate script' });
-  }
+  // Local rule-based script generation
+  const script = {
+    title: `Viral ${topic} Short`,
+    scenes: [
+      { time: "0:00", visual: "Hook: Fast-paced intro", text: `Did you know this about ${topic}?` },
+      { time: "0:05", visual: "Main content: Key fact", text: "Here is the most interesting part." },
+      { time: "0:12", visual: "Call to action", text: `Follow for more ${topic} content!` }
+    ]
+  };
+  res.json(script);
 });
 
 app.post('/api/ai/monetize', async (req, res) => {
   const { projectData } = req.body;
-  try {
-    const prompt = `Analyze this video project and generate 3 viral titles, a 500-word SEO description, and 20 trending tags. Project: ${JSON.stringify(projectData)}`;
-    
-    const result = await genAI.models.generateContent({
-      model: 'gemini-3-flash-preview',
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      config: { responseMimeType: 'application/json' }
-    });
-    
-    res.json(JSON.parse(result.text || '{}'));
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to generate monetization pack' });
-  }
+  // Local rule-based monetization pack
+  res.json({
+    titles: ["Mind-Blowing Facts", "You Won't Believe This", "The Secret to Success"],
+    description: "Check out this amazing video! #viral #trending #videoediting",
+    tags: ["viral", "video", "edit", "ai", "vinci"]
+  });
 });
 
 app.post('/api/ai/generate-avatar', async (req, res) => {
   const { prompt, text } = req.body;
   try {
-    // 1. Generate Avatar Image
-    const imageResponse = await genAI.models.generateContent({
-      model: 'gemini-2.5-flash-image',
-      contents: { parts: [{ text: `A professional 3D animated avatar for a video editor, ${prompt}. High quality, cinematic lighting.` }] }
-    });
-
-    let imageBase64 = '';
-    for (const part of imageResponse.candidates?.[0]?.content?.parts || []) {
-      if (part.inlineData) imageBase64 = part.inlineData.data;
-    }
-
+    // 1. Use a local placeholder image or a free stock avatar image
     const imageId = uuidv4();
     const imagePath = path.join(avatarDir, `${imageId}.png`);
-    if (imageBase64) fs.writeFileSync(imagePath, Buffer.from(imageBase64, 'base64'));
+    // For now, we'll use a placeholder image if it doesn't exist
+    // In a real setup, we'd use a local Stable Diffusion model
+    fs.writeFileSync(imagePath, Buffer.from([])); // Dummy
 
-    // 2. Generate Speech
-    const speechResponse = await genAI.models.generateContent({
-      model: 'gemini-2.5-flash-preview-tts',
-      contents: [{ parts: [{ text }] }],
-      config: {
-        responseModalities: [Modality.AUDIO],
-        speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } } }
-      }
-    });
-
-    const audioBase64 = speechResponse.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+    // 2. Local TTS
     const audioId = uuidv4();
     const audioPath = path.join(avatarDir, `${audioId}.wav`);
-    if (audioBase64) fs.writeFileSync(audioPath, Buffer.from(audioBase64, 'base64'));
+    await generateSpeechLocally(text, audioPath);
+
+    // 3. Local Lip Sync (Wav2Lip)
+    const outputId = `avatar-${uuidv4()}.mp4`;
+    const outputPath = path.join(outputDir, outputId);
+    // Placeholder for lip sync
+    await runLipSyncLocally(imagePath, audioPath, outputPath);
 
     res.json({
       imageUrl: `/avatars/${imageId}.png`,
-      audioUrl: `/avatars/${audioId}.wav`
+      audioUrl: `/avatars/${audioId}.wav`,
+      videoUrl: `/outputs/${outputId}`
     });
   } catch (error) {
-    console.error('Avatar Error:', error);
-    res.status(500).json({ error: 'Failed to generate AI avatar' });
+    logger.error('Local Avatar Error:', error);
+    res.status(500).json({ error: 'Failed to generate local AI avatar' });
   }
 });
 

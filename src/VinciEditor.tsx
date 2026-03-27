@@ -343,6 +343,10 @@ export default function VinciEditor() {
                 <Settings className="w-4 h-4" />
               </button>
             </div>
+            <div className="flex items-center gap-1.5 px-2 py-1 bg-green-500/10 border border-green-500/20 rounded-md">
+              <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+              <span className="text-[9px] font-bold text-green-500 uppercase tracking-widest">Local Mode</span>
+            </div>
             <div className="flex items-center gap-1 bg-[#0f0f0f] p-1 rounded-xl border border-[#222]">
               <button 
                 onClick={undo}

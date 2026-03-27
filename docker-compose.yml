@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  vinci:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
+    volumes:
+      - vinci-uploads:/app/uploads
+      - vinci-outputs:/app/outputs
+      - vinci-avatars:/app/avatars
+    restart: always
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  vinci-uploads:
+  vinci-outputs:
+  vinci-avatars:
