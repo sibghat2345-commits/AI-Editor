@@ -42,25 +42,44 @@ const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
 // Caching
 const aiCache = new Map<string, any>();
 
-// Job tracking
-const jobs = new Map<string, { status: 'processing' | 'completed' | 'failed', progress: number, result?: any, error?: string }>();
+// --- Logger ---
+const logger = {
+  info: (msg: string, ...args: any[]) => console.log(`[INFO] ${new Date().toISOString()} - ${msg}`, ...args),
+  error: (msg: string, ...args: any[]) => console.error(`[ERROR] ${new Date().toISOString()} - ${msg}`, ...args),
+  warn: (msg: string, ...args: any[]) => console.warn(`[WARN] ${new Date().toISOString()} - ${msg}`, ...args)
+};
+
+// --- Job tracking ---
+interface Job {
+  id: string;
+  status: 'processing' | 'completed' | 'failed';
+  progress: number;
+  result?: any;
+  error?: string;
+  type: string;
+  createdAt: string;
+}
+const jobs = new Map<string, Job>();
 
 // Optimized FFmpeg Helper
 const runFFmpeg = (inputPath: string, outputPath: string, options: any) => {
   return new Promise((resolve, reject) => {
+    logger.info(`Starting FFmpeg job for ${inputPath} -> ${outputPath}`);
+    
     let ff = ffmpeg(inputPath)
       .outputOptions([
-        '-preset slow',      // Better compression/quality ratio for final output
-        '-crf 18',           // Visually lossless
+        '-preset fast',      // Faster for dev, 'slow' for prod
+        '-crf 20',           // Balanced quality/size
         '-movflags +faststart',
-        '-pix_fmt yuv420p',  // Maximum compatibility
+        '-pix_fmt yuv420p',
         '-threads 0'
       ]);
 
     // Audio Enhancement
     let audioFilters = [];
     if (options.enhanceVoice) {
-      audioFilters.push('highpass=f=200', 'lowpass=f=3000', 'afftdn', 'arnndn=model=bd.rnnn');
+      // Basic voice enhancement: highpass/lowpass + noise reduction
+      audioFilters.push('highpass=f=150', 'lowpass=f=4000', 'afftdn');
     }
     if (options.normalizeAudio) {
       audioFilters.push('loudnorm=I=-16:TP=-1.5:LRA=11');
@@ -76,6 +95,7 @@ const runFFmpeg = (inputPath: string, outputPath: string, options: any) => {
       ff = ff.videoFilters('crop=ih*9/16:ih');
     }
 
+    // Video Filters
     if (options.filters) {
       const filters = options.filters.map((f: any) => {
         if (f.type === 'grayscale') return 'colorchannelmixer=.3:.4:.3:0:.3:.4:.3:0:.3:.4:.3';
@@ -83,6 +103,12 @@ const runFFmpeg = (inputPath: string, outputPath: string, options: any) => {
         if (f.type === 'vignette') return 'vignette=PI/4';
         if (f.type === 'brightness') return `eq=brightness=${f.value || 0}`;
         if (f.type === 'contrast') return `eq=contrast=${f.value || 1}`;
+        if (f.type === 'saturation') return `eq=saturation=${f.value || 1}`;
+        if (f.type === 'sepia') return 'colorchannelmixer=.393:.769:.189:0:.349:.686:.168:0:.272:.534:.131';
+        if (f.type === 'sharpen') return 'unsharp=3:3:1.5:3:3:0.5';
+        if (f.type === 'blur') return 'boxblur=10:1';
+        if (f.type === 'cinematic') return 'curves=preset=vintage,format=yuv420p';
+        if (f.type === 'vivid') return 'eq=contrast=1.2:saturation=1.3:brightness=0.02';
         return null;
       }).filter(Boolean);
       
@@ -96,11 +122,17 @@ const runFFmpeg = (inputPath: string, outputPath: string, options: any) => {
     ff.on('progress', (progress) => {
       if (options.jobId) {
         const job = jobs.get(options.jobId);
-        if (job) jobs.set(options.jobId, { ...job, progress: progress.percent || 0 });
+        if (job) jobs.set(options.jobId, { ...job, progress: Math.min(99, progress.percent || 0) });
       }
     })
-    .on('end', () => resolve(outputPath))
-    .on('error', (err) => reject(err))
+    .on('end', () => {
+      logger.info(`FFmpeg job completed: ${options.jobId}`);
+      resolve(outputPath);
+    })
+    .on('error', (err) => {
+      logger.error(`FFmpeg job failed: ${options.jobId}`, err);
+      reject(err);
+    })
     .save(outputPath);
   });
 };
@@ -136,26 +168,42 @@ app.post('/api/ai/parse-command', async (req, res) => {
 
   try {
     const systemInstruction = `
-      You are a professional video editing assistant. Convert user prompts into a list of structured commands.
-      Available actions: trim, crop, filter, speed, text, subtitle, color_correct, noise_reduction.
-      Support multi-step commands in a single prompt.
+      You are a professional video editing assistant for VINCI. Convert user prompts into a list of structured commands.
+      Available actions: trim, crop, filter, speed, text, subtitle, color_correct, noise_reduction, zoom, rotate, flip, enhance_audio.
+      
+      Parameters:
+      - trim: { start: number, duration: number }
+      - filter: { type: 'grayscale' | 'vignette' | 'sepia' | 'noise_reduction' | 'brightness' | 'contrast' | 'saturation' | 'sharpen' | 'blur' | 'cinematic' | 'vivid', value?: number }
+      - speed: { factor: number }
+      - crop: { ratio: '9:16' | '1:1' | '16:9' }
+      - color_correct: { brightness: number, contrast: number, saturation: number }
+      - enhance_audio: { normalize: boolean, denoise: boolean }
+      
+      Support multi-step commands. If the prompt is vague, infer professional defaults.
       Output ONLY a JSON array of objects.
-      Example: [{ "action": "trim", "params": { "start": 0, "duration": 5 } }, { "action": "filter", "params": { "type": "grayscale" } }]
-      If the prompt is vague, infer the most likely professional edit.
+      Example: [{ "action": "trim", "params": { "start": 0, "duration": 5 } }, { "action": "filter", "params": { "type": "cinematic" } }]
     `;
     
     const result = await genAI.models.generateContent({
       model: 'gemini-3-flash-preview',
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      config: { systemInstruction, responseMimeType: 'application/json' }
+      config: { 
+        systemInstruction, 
+        responseMimeType: 'application/json',
+        temperature: 0.2 // More deterministic
+      }
     });
     
     const commands = JSON.parse(result.text || '[]');
-    const response = { commands, interpretation: `I will ${commands.map((c: any) => c.action).join(' and ')} your video.` };
+    const interpretation = commands.length > 0 
+      ? `I'll apply ${commands.map((c: any) => c.action.replace('_', ' ')).join(', ')} to your video.`
+      : "I'm not sure how to handle that request. Could you be more specific?";
+      
+    const response = { commands, interpretation };
     aiCache.set(prompt, response);
     res.json(response);
   } catch (error) {
-    console.error('AI Error:', error);
+    logger.error('AI Parse Error:', error);
     res.status(500).json({ error: 'Failed to parse AI command' });
   }
 });
@@ -167,33 +215,47 @@ app.post('/api/process', async (req, res) => {
   const outputId = `${uuidv4()}.mp4`;
   const outputPath = path.join(outputDir, outputId);
 
-  jobs.set(jobId, { status: 'processing', progress: 0 });
+  if (!fs.existsSync(inputPath)) {
+    return res.status(404).json({ error: 'Input file not found' });
+  }
+
+  jobs.set(jobId, { 
+    id: jobId, 
+    status: 'processing', 
+    progress: 0, 
+    type: 'video_edit',
+    createdAt: new Date().toISOString()
+  });
 
   // Process commands into runFFmpeg options
   const options: any = { jobId, filters: [], enhanceVoice: false, normalizeAudio: true };
   commands.forEach((cmd: any) => {
-    if (cmd.action === 'trim') options.trim = cmd.params;
-    if (cmd.action === 'speed') options.speed = cmd.params.factor;
-    if (cmd.action === 'filter') options.filters.push(cmd.params);
-    if (cmd.action === 'crop') options.crop = true;
-    if (cmd.action === 'noise_reduction') {
-      options.filters.push({ type: 'noise_reduction' });
-      options.enhanceVoice = true;
-    }
-    if (cmd.action === 'enhance_audio') options.normalizeAudio = true;
-    if (cmd.action === 'color_correct') {
-      options.filters.push({ type: 'brightness', value: 0.02 });
-      options.filters.push({ type: 'contrast', value: 1.05 });
+    switch (cmd.action) {
+      case 'trim': options.trim = cmd.params; break;
+      case 'speed': options.speed = cmd.params.factor; break;
+      case 'filter': options.filters.push(cmd.params); break;
+      case 'crop': options.crop = true; break;
+      case 'noise_reduction':
+        options.filters.push({ type: 'noise_reduction' });
+        options.enhanceVoice = true;
+        break;
+      case 'enhance_audio': options.normalizeAudio = true; break;
+      case 'color_correct':
+        options.filters.push({ type: 'brightness', value: cmd.params?.brightness || 0.02 });
+        options.filters.push({ type: 'contrast', value: cmd.params?.contrast || 1.05 });
+        options.filters.push({ type: 'saturation', value: cmd.params?.saturation || 1.1 });
+        break;
     }
   });
 
   runFFmpeg(inputPath, outputPath, options)
     .then(() => {
-      jobs.set(jobId, { status: 'completed', progress: 100, result: { url: `/outputs/${outputId}`, id: outputId } });
+      const job = jobs.get(jobId);
+      if (job) jobs.set(jobId, { ...job, status: 'completed', progress: 100, result: { url: `/outputs/${outputId}`, id: outputId } });
     })
     .catch((err) => {
-      console.error('FFmpeg Error:', err);
-      jobs.set(jobId, { status: 'failed', progress: 0, error: err.message });
+      const job = jobs.get(jobId);
+      if (job) jobs.set(jobId, { ...job, status: 'failed', progress: 0, error: err.message });
     });
 
   res.json({ jobId });
@@ -289,7 +351,13 @@ app.post('/api/ai/generate-reels', async (req, res) => {
   const outputId = `reel-${uuidv4()}.mp4`;
   const outputPath = path.join(outputDir, outputId);
 
-  jobs.set(jobId, { status: 'processing', progress: 0 });
+  jobs.set(jobId, { 
+    id: jobId, 
+    status: 'processing', 
+    progress: 0, 
+    type: 'reels', 
+    createdAt: new Date().toISOString() 
+  });
 
   // Simulate highlight detection and crop
   // In a real app, we'd analyze frames or use a dedicated highlight API
@@ -303,11 +371,13 @@ app.post('/api/ai/generate-reels', async (req, res) => {
 
   runFFmpeg(inputPath, outputPath, options)
     .then(() => {
-      jobs.set(jobId, { status: 'completed', progress: 100, result: { url: `/outputs/${outputId}`, id: outputId } });
+      const job = jobs.get(jobId);
+      if (job) jobs.set(jobId, { ...job, status: 'completed', progress: 100, result: { url: `/outputs/${outputId}`, id: outputId } });
     })
     .catch((err) => {
       console.error('Reels Error:', err);
-      jobs.set(jobId, { status: 'failed', progress: 0, error: err.message });
+      const job = jobs.get(jobId);
+      if (job) jobs.set(jobId, { ...job, status: 'failed', progress: 0, error: err.message });
     });
 
   res.json({ jobId });
