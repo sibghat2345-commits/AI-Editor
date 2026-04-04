@@ -1,52 +1,45 @@
-# Build Stage
-FROM node:20-alpine AS build
+# Use Node.js 20 slim as base
+FROM node:20-slim
 
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    ffmpeg \
+    python3 \
+    python3-pip \
+    python3-venv \
+    pkg-config \
+    build-essential \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set working directory
 WORKDIR /app
-
-# Install build dependencies
-RUN apk add --no-cache python3 make g++
 
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies
+# Install Node.js dependencies
 RUN npm install
 
-# Copy source code
+# Install Python AI dependencies (Whisper, TTS)
+RUN pip3 install --no-cache-dir --break-system-packages \
+    openai-whisper \
+    TTS
+
+# Copy application code
 COPY . .
 
-# Build the frontend
-RUN npm run build
-
-# Production Stage
-FROM node:20-alpine
-
-WORKDIR /app
-
-# Install runtime dependencies (FFmpeg, Python for local AI)
-RUN apk add --no-cache ffmpeg python3 py3-pip make g++
-
-# Copy package files
-COPY package*.json ./
-
-# Install production dependencies only
-RUN npm install --production
-
-# Copy built assets from build stage
-COPY --from=build /app/dist ./dist
-
-# Copy server and other necessary files
-COPY server.ts ./
-COPY .env.example .env
-
-# Create storage directories
+# Create necessary directories
 RUN mkdir -p uploads outputs avatars
 
-# Expose port 3000
+# Set environment variables
+ENV NODE_ENV=production
+ENV PORT=3000
+# Default Ollama URL for Docker (assuming host machine runs Ollama)
+ENV OLLAMA_URL=http://host.docker.internal:11434/api/generate
+
+# Expose port
 EXPOSE 3000
 
-# Set environment to production
-ENV NODE_ENV=production
-
-# Start the server
-CMD ["npx", "tsx", "server.ts"]
+# Start the application
+CMD ["npm", "start"]

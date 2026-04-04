@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { 
   Plus, Upload, Image as ImageIcon, Video, Music, 
   Search, Trash2, Filter, Grid, List as ListIcon,
-  Sparkles, Wand2, Zap, Layout
+  Sparkles, Wand2, Zap, Layout, X, Loader2
 } from 'lucide-react';
 import { useDropzone } from 'react-dropzone';
 import { clsx, type ClassValue } from 'clsx';
@@ -20,22 +20,46 @@ interface MediaAsset {
   type: 'video' | 'audio' | 'image';
   duration?: number;
   thumbnail?: string;
+  metadata?: {
+    resolution: string;
+    fps: string;
+    codec: string;
+    duration: number;
+  };
 }
 
 export const MediaLibrary = ({ 
   assets, 
   onUpload, 
   onAddToTimeline,
-  onDeleteAsset
+  onDeleteAsset,
+  onAssetCreated
 }: { 
   assets: MediaAsset[], 
   onUpload: (files: File[]) => void, 
   onAddToTimeline: (asset: MediaAsset) => void,
-  onDeleteAsset?: (id: string) => void
+  onDeleteAsset?: (id: string) => void,
+  onAssetCreated?: (asset: any) => void
 }) => {
   const [activeTab, setActiveTab] = useState<'media' | 'ai'>('media');
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+  const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
+  const [analysis, setAnalysis] = useState<any>(null);
+
+  const fetchAnalysis = async (id: string) => {
+    try {
+      const res = await fetch(`/api/analysis/${id}`);
+      if (res.ok) {
+        const data = await res.json();
+        setAnalysis(data);
+      } else {
+        setAnalysis(null);
+      }
+    } catch (err) {
+      setAnalysis(null);
+    }
+  };
   
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop: onUpload,
@@ -121,10 +145,18 @@ export const MediaLibrary = ({
                 viewMode === 'grid' ? "grid grid-cols-2" : "flex flex-col"
               )}>
                 {filteredAssets.map(asset => (
-                  <div key={asset.id} className={cn(
-                    "group relative bg-[#2a2a2a] rounded-xl overflow-hidden cursor-pointer border border-[#333] hover:border-purple-500/50 transition-all shadow-lg",
-                    viewMode === 'list' ? "flex items-center h-16" : "aspect-video"
-                  )}>
+                  <div 
+                    key={asset.id} 
+                    onClick={() => {
+                      setSelectedAssetId(asset.id);
+                      fetchAnalysis(asset.id);
+                    }}
+                    className={cn(
+                      "group relative bg-[#2a2a2a] rounded-xl overflow-hidden cursor-pointer border transition-all shadow-lg",
+                      selectedAssetId === asset.id ? "border-purple-500" : "border-[#333] hover:border-purple-500/50",
+                      viewMode === 'list' ? "flex items-center h-16" : "aspect-video"
+                    )}
+                  >
                     {asset.type === 'video' ? (
                       <video src={asset.url} className={cn("object-cover", viewMode === 'list' ? "w-24 h-full" : "w-full h-full")} />
                     ) : (
@@ -149,7 +181,7 @@ export const MediaLibrary = ({
                         viewMode === 'grid' ? "flex-col w-full px-3" : "ml-auto pr-2"
                       )}>
                         <button 
-                          onClick={() => onAddToTimeline(asset)}
+                          onClick={(e) => { e.stopPropagation(); onAddToTimeline(asset); }}
                           className="bg-purple-600 hover:bg-purple-500 text-white text-[9px] font-bold py-1.5 rounded-lg flex items-center justify-center gap-1 transition-colors shadow-lg"
                         >
                           <Plus className="w-3 h-3" /> Add to Timeline
@@ -172,9 +204,53 @@ export const MediaLibrary = ({
                 ))}
               </div>
             )}
+
+            {selectedAssetId && (
+              <div className="mt-6 p-4 bg-[#0f0f0f] rounded-2xl border border-[#222] space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Asset Details</h3>
+                  <button onClick={() => setSelectedAssetId(null)}><X className="w-3 h-3" /></button>
+                </div>
+                
+                {assets.find(a => a.id === selectedAssetId)?.metadata && (
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="p-2 bg-[#1a1a1a] rounded-lg">
+                      <p className="text-[8px] text-gray-600 uppercase font-bold">Resolution</p>
+                      <p className="text-[10px] text-white font-bold">{assets.find(a => a.id === selectedAssetId)?.metadata?.resolution}</p>
+                    </div>
+                    <div className="p-2 bg-[#1a1a1a] rounded-lg">
+                      <p className="text-[8px] text-gray-600 uppercase font-bold">FPS</p>
+                      <p className="text-[10px] text-white font-bold">{assets.find(a => a.id === selectedAssetId)?.metadata?.fps}</p>
+                    </div>
+                  </div>
+                )}
+
+                {analysis ? (
+                  <div className="space-y-3">
+                    <div className="p-3 bg-purple-500/5 border border-purple-500/20 rounded-xl">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Sparkles className="w-3 h-3 text-purple-400" />
+                        <span className="text-[9px] font-bold text-purple-400 uppercase tracking-widest">AI Summary</span>
+                      </div>
+                      <p className="text-[10px] text-gray-400 leading-relaxed">{analysis.summary}</p>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {analysis.tags?.map((tag: string) => (
+                        <span key={tag} className="px-2 py-0.5 bg-[#222] rounded text-[8px] text-gray-500 border border-[#333]">#{tag}</span>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 text-gray-600 p-2">
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    <span className="text-[9px] font-bold uppercase tracking-widest">Analyzing Content...</span>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         ) : (
-          <AutomationTools assets={assets} />
+          <AutomationTools assets={assets} onAssetCreated={onAssetCreated} />
         )}
       </div>
     </div>

@@ -12,31 +12,68 @@ interface ExportModalProps {
   isOpen: boolean;
   onClose: () => void;
   onExport: (settings: any) => void;
+  project: any;
 }
 
-export const ExportModal = ({ isOpen, onClose, onExport }: ExportModalProps) => {
+export const ExportModal = ({ isOpen, onClose, onExport, project }: ExportModalProps) => {
   const [isExporting, setIsExporting] = useState(false);
   const [progress, setProgress] = useState(0);
   const [quality, setQuality] = useState<'720p' | '1080p' | '4k'>('1080p');
   const [format, setFormat] = useState<'mp4' | 'mov' | 'gif'>('mp4');
+  const [preset, setPreset] = useState<'youtube' | 'shorts' | 'custom'>('youtube');
+  const [exportResult, setExportResult] = useState<string | null>(null);
 
-  const handleExport = () => {
+  const handleExport = async () => {
     setIsExporting(true);
-    let p = 0;
-    const interval = setInterval(() => {
-      p += Math.random() * 15;
-      if (p >= 100) {
-        p = 100;
-        clearInterval(interval);
-        setTimeout(() => {
-          setIsExporting(false);
-          setProgress(0);
-          onExport({ quality, format });
-          onClose();
-        }, 1000);
-      }
-      setProgress(p);
-    }, 500);
+    setExportResult(null);
+    setProgress(0);
+
+    try {
+      // Use the first asset for now as the source for export
+      // In a real app, this would be the complex timeline composition
+      const inputId = project.assets[0]?.id;
+      if (!inputId) throw new Error('No media to export');
+
+      const res = await fetch('/api/process', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          inputId, 
+          preset,
+          commands: [], // Final export might not need extra AI commands if they were already applied
+          settings: { quality, format } 
+        })
+      });
+      
+      if (!res.ok) throw new Error('Export failed');
+      const { jobId } = await res.json();
+
+      const interval = setInterval(async () => {
+        try {
+          const statusRes = await fetch(`/api/job/${jobId}`);
+          const job = await statusRes.json();
+          
+          setProgress(job.progress);
+
+          if (job.status === 'completed') {
+            clearInterval(interval);
+            setExportResult(job.result.url);
+            setIsExporting(false);
+            onExport({ quality, format, url: job.result.url });
+          } else if (job.status === 'failed') {
+            clearInterval(interval);
+            setIsExporting(false);
+            alert(`Export failed: ${job.error}`);
+          }
+        } catch (err) {
+          console.error('Polling error:', err);
+        }
+      }, 1000);
+    } catch (err) {
+      console.error(err);
+      setIsExporting(false);
+      alert('Failed to start export');
+    }
   };
 
   if (!isOpen) return null;
@@ -114,6 +151,33 @@ export const ExportModal = ({ isOpen, onClose, onExport }: ExportModalProps) => 
 
               <div className="p-10 grid grid-cols-2 gap-12">
                 <div className="space-y-8">
+                  <div className="space-y-4">
+                    <label className="text-[10px] font-bold text-gray-600 uppercase tracking-widest flex items-center gap-2">
+                      <Monitor className="w-3.5 h-3.5 text-purple-500" /> Export Preset
+                    </label>
+                    <div className="flex gap-2">
+                      {[
+                        { id: 'youtube', label: 'YouTube', icon: <Monitor className="w-4 h-4" /> },
+                        { id: 'shorts', label: 'Shorts/Reels', icon: <Smartphone className="w-4 h-4" /> },
+                        { id: 'custom', label: 'Custom', icon: <Square className="w-4 h-4" /> }
+                      ].map((p) => (
+                        <button
+                          key={p.id}
+                          onClick={() => setPreset(p.id as any)}
+                          className={cn(
+                            "flex-1 p-4 rounded-2xl border transition-all flex flex-col items-center gap-2",
+                            preset === p.id 
+                              ? "bg-purple-600/10 border-purple-500 text-purple-400" 
+                              : "bg-[#0a0a0a] border-[#222] text-gray-600 hover:text-gray-400"
+                          )}
+                        >
+                          {p.icon}
+                          <span className="text-[9px] font-bold uppercase tracking-widest">{p.label}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
                   <div className="space-y-4">
                     <label className="text-[10px] font-bold text-gray-600 uppercase tracking-widest flex items-center gap-2">
                       <Zap className="w-3.5 h-3.5 text-purple-500" /> Resolution
@@ -195,12 +259,23 @@ export const ExportModal = ({ isOpen, onClose, onExport }: ExportModalProps) => 
                       <Sparkles className="w-4 h-4 animate-pulse" />
                       <span className="text-[10px] font-bold uppercase tracking-widest">AI Upscaling Enabled</span>
                     </div>
-                    <button 
-                      onClick={handleExport}
-                      className="w-full py-5 bg-purple-600 hover:bg-purple-500 text-white font-black text-sm uppercase tracking-[0.2em] rounded-3xl transition-all shadow-[0_10px_30px_rgba(147,51,234,0.3)] hover:-translate-y-1 active:translate-y-0"
-                    >
-                      Start Export
-                    </button>
+                    {exportResult ? (
+                      <a 
+                        href={exportResult} 
+                        download 
+                        className="w-full py-5 bg-green-600 hover:bg-green-500 text-white font-black text-sm uppercase tracking-[0.2em] rounded-3xl transition-all shadow-[0_10px_30px_rgba(34,197,94,0.3)] flex items-center justify-center gap-2"
+                      >
+                        <Download className="w-5 h-5" />
+                        Download Video
+                      </a>
+                    ) : (
+                      <button 
+                        onClick={handleExport}
+                        className="w-full py-5 bg-purple-600 hover:bg-purple-500 text-white font-black text-sm uppercase tracking-[0.2em] rounded-3xl transition-all shadow-[0_10px_30px_rgba(147,51,234,0.3)] hover:-translate-y-1 active:translate-y-0"
+                      >
+                        Start Export
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>

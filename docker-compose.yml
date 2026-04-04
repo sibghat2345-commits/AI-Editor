@@ -1,19 +1,24 @@
 version: '3.8'
 
 services:
-  vinci:
+  vinci-editor:
     build: .
+    container_name: vinci-ai-editor
     ports:
       - "3000:3000"
     environment:
       - NODE_ENV=production
+      - PORT=3000
+      - OLLAMA_URL=http://host.docker.internal:11434/api/generate
       - SUPABASE_URL=${SUPABASE_URL}
       - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
-      - vinci-uploads:/app/uploads
-      - vinci-outputs:/app/outputs
-      - vinci-avatars:/app/avatars
-    restart: always
+      - ./uploads:/app/uploads
+      - ./outputs:/app/outputs
+      - ./avatars:/app/avatars
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
       interval: 30s
@@ -21,6 +26,6 @@ services:
       retries: 3
 
 volumes:
-  vinci-uploads:
-  vinci-outputs:
-  vinci-avatars:
+  uploads:
+  outputs:
+  avatars:

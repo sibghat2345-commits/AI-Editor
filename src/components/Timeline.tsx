@@ -43,25 +43,46 @@ export const Timeline = ({
   selectedClipId: string | null,
   onSplitClip?: (id: string, time: number) => void,
   onDeleteClip?: (id: string) => void,
-  onMoveClip?: (id: string, newStartTime: number, newTrack: number) => void
+  onMoveClip?: (id: string, newStartTime: number, newTrack: number) => void,
+  onMoveEnd?: () => void
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState(60); // pixels per second
   const [isDraggingPlayhead, setIsDraggingPlayhead] = useState(false);
   const [isDraggingClip, setIsDraggingClip] = useState<string | null>(null);
+  const [dragOffset, setDragOffset] = useState(0);
 
   const handleTimelineClick = (e: React.MouseEvent) => {
-    if (!containerRef.current || isDraggingPlayhead) return;
+    if (!containerRef.current || isDraggingPlayhead || isDraggingClip) return;
     const rect = containerRef.current.getBoundingClientRect();
     const x = e.clientX - rect.left + containerRef.current.scrollLeft;
     onTimeChange(Math.max(0, x / zoom));
   };
 
   const handleMouseMove = (e: React.MouseEvent) => {
-    if (isDraggingPlayhead && containerRef.current) {
-      const rect = containerRef.current.getBoundingClientRect();
-      const x = e.clientX - rect.left + containerRef.current.scrollLeft;
+    if (!containerRef.current) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left + containerRef.current.scrollLeft;
+
+    if (isDraggingPlayhead) {
       onTimeChange(Math.max(0, x / zoom));
+    } else if (isDraggingClip) {
+      const newStartTime = Math.max(0, (x - dragOffset) / zoom);
+      // Determine track based on Y position
+      const y = e.clientY - rect.top;
+      const newTrack = Math.max(0, Math.min(2, Math.floor((y - 48) / 64))); // 48 is ruler height, 64 is track height
+      onMoveClip?.(isDraggingClip, newStartTime, newTrack);
+    }
+  };
+
+  const handleClipMouseDown = (e: React.MouseEvent, clip: TimelineClip) => {
+    e.stopPropagation();
+    onClipSelect(clip.id);
+    setIsDraggingClip(clip.id);
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (rect) {
+      const x = e.clientX - rect.left + (containerRef.current?.scrollLeft || 0);
+      setDragOffset(x - (clip.startTime * zoom));
     }
   };
 
@@ -144,8 +165,8 @@ export const Timeline = ({
           className="flex-1 overflow-x-auto overflow-y-auto relative scrollbar-hide bg-[#0d0d0d]"
           onClick={handleTimelineClick}
           onMouseMove={handleMouseMove}
-          onMouseUp={() => setIsDraggingPlayhead(false)}
-          onMouseLeave={() => setIsDraggingPlayhead(false)}
+          onMouseUp={() => { setIsDraggingPlayhead(false); setIsDraggingClip(null); }}
+          onMouseLeave={() => { setIsDraggingPlayhead(false); setIsDraggingClip(null); }}
         >
           <div className="absolute top-0 left-0 h-full" style={{ width: Math.max(duration * zoom + 400, 2000) }}>
             {/* Time Rulers */}
@@ -171,7 +192,7 @@ export const Timeline = ({
                     <motion.div
                       layoutId={clip.id}
                       key={clip.id}
-                      onClick={(e) => { e.stopPropagation(); onClipSelect(clip.id); }}
+                      onMouseDown={(e) => handleClipMouseDown(e, clip)}
                       className={cn(
                         "absolute top-1 bottom-1 rounded-xl border flex flex-col justify-center px-3 overflow-hidden cursor-pointer transition-all shadow-xl group/clip",
                         selectedClipId === clip.id ? "ring-2 ring-purple-500 border-purple-400 z-10" : "border-white/5 hover:border-white/20",

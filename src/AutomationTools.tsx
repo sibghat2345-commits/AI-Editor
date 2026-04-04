@@ -51,7 +51,7 @@ const ToolModal = ({ isOpen, onClose, title, icon, children }: ToolModalProps) =
   </AnimatePresence>
 );
 
-export const AutomationTools = ({ assets }: { assets: any[] }) => {
+export const AutomationTools = ({ assets, onAssetCreated }: { assets: any[], onAssetCreated?: (asset: any) => void }) => {
   const [activeTool, setActiveTool] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<any>(null);
@@ -126,7 +126,35 @@ export const AutomationTools = ({ assets }: { assets: any[] }) => {
       
       if (!response.ok) throw new Error('Generation failed');
       const resData = await response.json();
-      setResult(resData);
+      
+      if (resData.jobId) {
+        // Poll for job status
+        const pollJob = async () => {
+          const jobRes = await fetch(`/api/job/${resData.jobId}`);
+          const jobData = await jobRes.json();
+          if (jobData.status === 'completed') {
+            setResult(jobData.result);
+            setLoading(false);
+            if (onAssetCreated && jobData.result.id && jobData.result.url) {
+              onAssetCreated({
+                id: jobData.result.id,
+                url: jobData.result.url,
+                name: jobData.result.name || 'AI Generated Asset',
+                type: 'video'
+              });
+            }
+          } else if (jobData.status === 'failed') {
+            setResult({ error: jobData.error || 'Job failed' });
+            setLoading(false);
+          } else {
+            setTimeout(pollJob, 2000);
+          }
+        };
+        pollJob();
+      } else {
+        setResult(resData);
+        setLoading(false);
+      }
     } catch (err) {
       console.error(err);
       setResult({ error: 'AI generation failed. Please try again.' });

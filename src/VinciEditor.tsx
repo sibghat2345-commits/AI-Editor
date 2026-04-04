@@ -319,6 +319,14 @@ export default function VinciEditor() {
     });
   };
 
+  const handleAssetCreated = (asset: MediaAsset) => {
+    setProject({
+      ...project,
+      assets: [asset, ...project.assets]
+    });
+    toast.success(`AI generated: ${asset.name}`);
+  };
+
   const selectedClip = project.clips.find(c => c.id === selectedClipId) || null;
 
   return (
@@ -388,6 +396,7 @@ export default function VinciEditor() {
           onUpload={handleUpload} 
           onAddToTimeline={addAssetToTimeline} 
           onDeleteAsset={handleDeleteAsset}
+          onAssetCreated={handleAssetCreated}
         />
         
         <div className="flex-1 flex flex-col bg-[#0f0f0f] relative">
@@ -399,8 +408,9 @@ export default function VinciEditor() {
                 project.aspectRatio === '16:9' ? "aspect-video w-full max-w-5xl" : "aspect-[9/16] h-full"
               )}
             >
-              {project.assets.length > 0 ? (
+              {project.assets.length > 0 && project.assets[0].url ? (
                 <video 
+                  key={project.assets[0].url}
                   ref={videoRef}
                   src={project.assets[0].url} 
                   className="w-full h-full object-contain"
@@ -519,6 +529,7 @@ export default function VinciEditor() {
       <ExportModal 
         isOpen={isExportOpen} 
         onClose={() => setIsExportOpen(false)}
+        project={project}
         onExport={(settings) => {
           toast.success(`Exporting ${settings.quality} ${settings.format} video...`);
         }}

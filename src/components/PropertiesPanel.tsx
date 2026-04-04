@@ -97,14 +97,36 @@ export const PropertiesPanel = ({
                     <div className="space-y-1.5">
                       <span className="text-[9px] text-gray-500 uppercase font-bold tracking-widest">Scale</span>
                       <div className="relative">
-                        <input type="number" defaultValue={100} className="w-full bg-[#0f0f0f] border border-[#222] rounded-lg p-2 text-xs text-white focus:border-purple-500/50 outline-none" />
+                        <input 
+                          type="number" 
+                          value={selectedClip.effects?.find((e: any) => e.type === 'scale')?.value || 100} 
+                          onChange={(e) => {
+                            const val = parseInt(e.target.value);
+                            const effects = selectedClip.effects || [];
+                            const newEffects = effects.filter((ef: any) => ef.type !== 'scale');
+                            newEffects.push({ type: 'scale', value: val });
+                            onUpdateClip(selectedClip.id, { effects: newEffects });
+                          }}
+                          className="w-full bg-[#0f0f0f] border border-[#222] rounded-lg p-2 text-xs text-white focus:border-purple-500/50 outline-none" 
+                        />
                         <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[9px] text-gray-600">%</span>
                       </div>
                     </div>
                     <div className="space-y-1.5">
                       <span className="text-[9px] text-gray-500 uppercase font-bold tracking-widest">Opacity</span>
                       <div className="relative">
-                        <input type="number" defaultValue={100} className="w-full bg-[#0f0f0f] border border-[#222] rounded-lg p-2 text-xs text-white focus:border-purple-500/50 outline-none" />
+                        <input 
+                          type="number" 
+                          value={selectedClip.effects?.find((e: any) => e.type === 'opacity')?.value || 100} 
+                          onChange={(e) => {
+                            const val = parseInt(e.target.value);
+                            const effects = selectedClip.effects || [];
+                            const newEffects = effects.filter((ef: any) => ef.type !== 'opacity');
+                            newEffects.push({ type: 'opacity', value: val });
+                            onUpdateClip(selectedClip.id, { effects: newEffects });
+                          }}
+                          className="w-full bg-[#0f0f0f] border border-[#222] rounded-lg p-2 text-xs text-white focus:border-purple-500/50 outline-none" 
+                        />
                         <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[9px] text-gray-600">%</span>
                       </div>
                     </div>
@@ -155,13 +177,30 @@ export const PropertiesPanel = ({
                     <Palette className="w-3 h-3" /> Color Grading
                   </label>
                   <div className="grid grid-cols-2 gap-2">
-                    {['Cinematic', 'Noir', 'Teal & Orange', 'Vivid', 'Muted', 'Cyberpunk'].map(f => (
-                      <button key={f} className="p-2.5 bg-[#1a1a1a] hover:bg-purple-600/20 hover:border-purple-500/50 rounded-xl text-[10px] border border-[#222] transition-all font-medium">
+                    {['grayscale', 'sepia', 'vivid', 'cinematic', 'blur', 'sharpen'].map(f => (
+                      <button 
+                        key={f} 
+                        onClick={() => {
+                          const effects = selectedClip.effects || [];
+                          const newEffects = effects.filter((ef: any) => ef.type !== 'filter');
+                          newEffects.push({ type: 'filter', name: f });
+                          onUpdateClip(selectedClip.id, { effects: newEffects });
+                        }}
+                        className={cn(
+                          "p-2.5 rounded-xl text-[10px] border transition-all font-medium capitalize",
+                          selectedClip.effects?.find((e: any) => e.type === 'filter' && e.name === f)
+                            ? "bg-purple-600 border-purple-500 text-white"
+                            : "bg-[#1a1a1a] border-[#222] hover:bg-purple-600/20 hover:border-purple-500/50"
+                        )}
+                      >
                         {f}
                       </button>
                     ))}
                   </div>
-                  <button className="w-full py-2 flex items-center justify-center gap-2 text-[10px] text-gray-500 hover:text-white transition-colors">
+                  <button 
+                    onClick={() => onUpdateClip(selectedClip.id, { effects: (selectedClip.effects || []).filter((e: any) => e.type !== 'filter') })}
+                    className="w-full py-2 flex items-center justify-center gap-2 text-[10px] text-gray-500 hover:text-white transition-colors"
+                  >
                     <RotateCcw className="w-3 h-3" /> Reset Grading
                   </button>
                 </div>
